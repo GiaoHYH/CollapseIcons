@@ -1,0 +1,11 @@
+build/
+dist/
+.DS_Store
+*.xcuserstate
+DerivedData/
+/tmp/
+*.swp
+*.o
+.idea/
+.vscode/
+*.app/
