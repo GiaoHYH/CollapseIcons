@@ -293,34 +293,10 @@ struct OverflowBarView: View {
         }
         .frame(height: 28)
         .background(
-            VisualEffectBackground(material: .menu, blending: .withinWindow)
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5)
+            Color.clear
+                .adaptiveGlass(cornerRadius: 6, interactive: true)
         )
         .padding(.horizontal, 2)
         .padding(.vertical, 2)
-    }
-}
-
-/// AppKit material behind SwiftUI content — matches real menu bar chrome.
-struct VisualEffectBackground: NSViewRepresentable {
-    var material: NSVisualEffectView.Material
-    var blending: NSVisualEffectView.BlendingMode
-
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let v = NSVisualEffectView()
-        v.material = material
-        v.blendingMode = blending
-        v.state = .followsWindowActiveState
-        v.isEmphasized = true
-        return v
-    }
-
-    func updateNSView(_ v: NSVisualEffectView, context: Context) {
-        v.material = material
-        v.blendingMode = blending
     }
 }

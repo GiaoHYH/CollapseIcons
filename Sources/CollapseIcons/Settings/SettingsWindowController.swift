@@ -18,7 +18,7 @@ final class SettingsWindowController: NSWindowController {
         window.contentViewController = host
         window.center()
         window.isReleasedWhenClosed = false
-        window.backgroundColor = NSColor(calibratedRed: 0.06, green: 0.09, blue: 0.16, alpha: 1)
+        window.backgroundColor = .windowBackgroundColor
         super.init(window: window)
     }
 

@@ -1,16 +1,17 @@
+import AppKit
 import SwiftUI
 import Carbon.HIToolbox
 
-// MARK: - Design tokens (Desk Rail)
+// MARK: - Design tokens
 private enum Rail {
-    static let ink     = Color(red: 0.06, green: 0.09, blue: 0.16)   // #0F172A
-    static let rail    = Color(red: 0.12, green: 0.16, blue: 0.23)   // #1E293B
-    static let plate   = Color(red: 0.16, green: 0.21, blue: 0.30)   // #293548
-    static let mist    = Color(red: 0.95, green: 0.96, blue: 0.98)   // #F1F5F9
-    static let mute    = Color(red: 0.58, green: 0.64, blue: 0.72)   // #94A3B8
-    static let indigo  = Color(red: 0.39, green: 0.40, blue: 0.95)   // #6366F1
-    static let glow    = Color(red: 0.65, green: 0.71, blue: 0.99)   // #A5B4FC
-    static let mint    = Color(red: 0.20, green: 0.83, blue: 0.60)   // #34D399
+    static let ink = Color(nsColor: .windowBackgroundColor)
+    static let rail = Color(nsColor: .controlBackgroundColor)
+    static let plate = Color(nsColor: .underPageBackgroundColor)
+    static let mist = Color.primary
+    static let mute = Color.secondary
+    static let indigo = Color.accentColor
+    static let glow = Color.accentColor
+    static let mint = Color.green
 }
 
 struct SettingsRoot: View {
@@ -40,7 +41,6 @@ struct SettingsRoot: View {
             }
         }
         .frame(minWidth: 500, minHeight: 640)
-        .preferredColorScheme(.dark)
         .background(
             HotkeyCaptureRepresentable(isRecording: $recordingHotkey) { code, mods in
                 model.setHotkey(code, mods)
@@ -73,9 +73,12 @@ struct SettingsRoot: View {
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
-                        .background(Rail.plate)
-                        .clipShape(Capsule())
                         .foregroundStyle(Rail.glow)
+                        .adaptiveGlass(
+                            cornerRadius: 16,
+                            tint: Rail.indigo.opacity(0.15),
+                            interactive: true
+                        )
                 }
                 .buttonStyle(.plain)
             }
@@ -83,13 +86,9 @@ struct SettingsRoot: View {
             MenubarRailPreview(collapsed: previewCollapsed, style: model.iconStyle, thickness: model.separatorThickness)
                 .frame(height: 44)
                 .padding(10)
-                .background(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Rail.rail)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .strokeBorder(Rail.indigo.opacity(0.25), lineWidth: 1)
-                        )
+                .adaptiveGlass(
+                    cornerRadius: 14,
+                    tint: Rail.indigo.opacity(0.08)
                 )
 
             Text("⌘ 拖动真实状态栏图标：左侧折叠 · 右侧常显 · ▶ 为开关")
@@ -105,32 +104,25 @@ struct SettingsRoot: View {
         HStack(spacing: 4) {
             ForEach(Tab.allCases) { t in
                 Button {
-                    withAnimation(.easeOut(duration: 0.15)) { tab = t }
+                    withAnimation(.easeOut(duration: 0.18)) { tab = t }
                 } label: {
                     Text(t.rawValue)
                         .font(.system(size: 13, weight: tab == t ? .semibold : .regular, design: .rounded))
                         .foregroundStyle(tab == t ? Rail.mist : Rail.mute)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 10)
-                        .background(
-                            Group {
-                                if tab == t {
-                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                        .fill(Rail.plate)
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                                .strokeBorder(Rail.indigo.opacity(0.45), lineWidth: 1)
-                                        )
-                                }
+                        .background {
+                            if tab == t {
+                                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                    .fill(Rail.indigo.opacity(0.16))
                             }
-                        )
+                        }
                 }
                 .buttonStyle(.plain)
             }
         }
         .padding(4)
-        .background(Rail.rail)
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .adaptiveGlass(cornerRadius: 14)
         .padding(.horizontal, 20)
         .padding(.bottom, 4)
     }
@@ -168,11 +160,12 @@ struct SettingsRoot: View {
                             .foregroundStyle(recordingHotkey ? Rail.mint : Rail.glow)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
-                            .background(Rail.ink)
-                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .strokeBorder(recordingHotkey ? Rail.mint.opacity(0.6) : Rail.indigo.opacity(0.35), lineWidth: 1)
+                            .adaptiveGlass(
+                                cornerRadius: 10,
+                                tint: recordingHotkey
+                                    ? Rail.mint.opacity(0.16)
+                                    : Rail.indigo.opacity(0.12),
+                                interactive: true
                             )
                     }
                     .buttonStyle(.plain)
@@ -405,10 +398,10 @@ private struct Card<Content: View>: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Rail.rail)
+                .fill(Rail.rail.opacity(0.86))
                 .overlay(
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.05), lineWidth: 1)
+                        .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
                 )
         )
     }
@@ -487,8 +480,12 @@ private struct GhostButtonStyle: ButtonStyle {
             .foregroundStyle(Rail.mute)
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .background(Rail.plate.opacity(configuration.isPressed ? 0.7 : 1))
-            .clipShape(Capsule())
+            .opacity(configuration.isPressed ? 0.65 : 1)
+            .adaptiveGlass(
+                cornerRadius: 16,
+                tint: Rail.indigo.opacity(0.08),
+                interactive: true
+            )
     }
 }
 

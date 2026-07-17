@@ -25,6 +25,7 @@ enum ScreenLayout {
     }
 
     /// Prefer intersection with the status-item frame; fall back to mid-point hit test.
+    /// Returns nil when the frame cannot be associated with a connected display.
     static func screen(containing frame: CGRect) -> NSScreen? {
         let inset = frame.insetBy(dx: -1, dy: -1)
         // Highest vertical overlap wins (status items sit in the menubar strip).
@@ -41,17 +42,16 @@ enum ScreenLayout {
         if let hit = NSScreen.screens.first(where: { $0.frame.insetBy(dx: -2, dy: -2).contains(mid) }) {
             return hit
         }
-        return NSScreen.main
+        return nil
     }
 
-    /// The display our toggle currently lives on. This is the source of truth.
+    /// The display our status items currently live on.
+    /// Layout callers must retain their last confirmed screen when this is nil rather
+    /// than guessing from the mouse position or the main display.
     static func statusBarScreen(toggle: NSStatusItem? = nil, separator: NSStatusItem? = nil) -> NSScreen? {
         if let toggle, let s = screen(for: toggle) { return s }
         if let separator, let s = screen(for: separator) { return s }
-        // Last resort: mouse, then main — but never "prefer notched".
-        let mouse = NSEvent.mouseLocation
-        if let hit = NSScreen.screens.first(where: { $0.frame.contains(mouse) }) { return hit }
-        return NSScreen.main
+        return nil
     }
 
     // MARK: - Notch / safe areas (always pass the target screen)

@@ -17,6 +17,8 @@ final class StatusBarController {
     private var normalLen: CGFloat = 16
     private var collapsedLen: CGFloat = 2000
     private var presentingOverflow = false
+    private var layoutScreen: NSScreen?
+    private var layoutGeneration: UInt = 0
 
     private var isCollapsed: Bool { separator.length > normalLen + 1 }
 
@@ -29,8 +31,12 @@ final class StatusBarController {
     }
 
     /// The display our status items currently live on.
+    ///
+    /// Status item windows can temporarily lose their screen during a menu-bar
+    /// relayout. Keep the last confirmed display instead of guessing from the
+    /// mouse location, which is often on a different display.
     private var activeScreen: NSScreen? {
-        ScreenLayout.statusBarScreen(toggle: toggle, separator: separator)
+        resolveLayoutScreen()
     }
 
     /// Notch jump only when the *active* display has a notch (and setting on).
@@ -40,7 +46,7 @@ final class StatusBarController {
     }
 
     init() {
-        updateLengths()
+        updateLengths(on: activeScreen)
         setup()
         rebuildAlwaysHidden()
         setupHover()
@@ -84,7 +90,8 @@ final class StatusBarController {
     }
 
     func reloadFromSettings() {
-        updateLengths()
+        _ = beginLayoutTransition()
+        updateLengths(on: activeScreen)
         refreshIcons()
         rebuildAlwaysHidden()
         setupHover()
@@ -131,12 +138,47 @@ final class StatusBarController {
         }
     }
 
-    private func updateLengths() {
-        let screen = activeScreen ?? NSScreen.main
-        let w = screen?.frame.width ?? 1728
+    private func resolveLayoutScreen() -> NSScreen? {
+        if let screen = ScreenLayout.statusBarScreen(toggle: toggle, separator: separator) {
+            layoutScreen = screen
+            return screen
+        }
+
+        if let screen = layoutScreen,
+           NSScreen.screens.contains(where: {
+               ScreenLayout.displayID(of: $0) == ScreenLayout.displayID(of: screen)
+           }) {
+            return screen
+        }
+
+        layoutScreen = nil
+        return nil
+    }
+
+    @discardableResult
+    private func beginLayoutTransition() -> UInt {
+        layoutGeneration &+= 1
+        return layoutGeneration
+    }
+
+    private func isCurrentLayoutTransition(_ generation: UInt) -> Bool {
+        generation == layoutGeneration
+    }
+
+    private func prepareLayoutScreen() -> NSScreen? {
+        guard let screen = resolveLayoutScreen() else { return nil }
+        updateLengths(on: screen)
+        return screen
+    }
+
+    private func updateLengths(on screen: NSScreen?) {
+        normalLen = max(8, CGFloat(AppSettings.separatorThickness) * 8 + 4)
+        guard let screen else { return }
+
+        let w = screen.frame.width
         // Collapse length scales to the display that hosts the bar.
         let base: CGFloat
-        if let screen, ScreenLayout.hasNotch(on: screen) {
+        if ScreenLayout.hasNotch(on: screen) {
             // Only need to push past the right-safe band + a margin.
             let rightW = ScreenLayout.rightSafeRect(on: screen)?.width ?? (w * 0.4)
             base = max(400, min(rightW + 200, 3200))
@@ -144,7 +186,21 @@ final class StatusBarController {
             base = max(500, min(w + 200, 4000))
         }
         collapsedLen = base
-        normalLen = max(8, CGFloat(AppSettings.separatorThickness) * 8 + 4)
+    }
+
+    private func applyCollapsedLayout() {
+        separator.length = collapsedLen
+        if AppSettings.alwaysHidden {
+            alwaysHidden?.length = collapsedLen
+        }
+    }
+
+    private func applyExpandedLayout() {
+        separator.length = AppSettings.separatorsHidden ? 0 : normalLen
+        if AppSettings.alwaysHidden {
+            // The always-hidden zone remains hidden while the normal zone expands.
+            alwaysHidden?.length = AppSettings.separatorsHidden ? 0 : collapsedLen
+        }
     }
 
     private func refreshIcons() {
@@ -186,14 +242,14 @@ final class StatusBarController {
 
     func collapse() {
         dismissOverflowBar(syncCollapse: false)
-        guard !isCollapsed else {
+        _ = beginLayoutTransition()
+        guard prepareLayoutScreen() != nil else {
             refreshIcons()
             return
         }
         guard positionsOK else { showSetupHint(); return }
 
-        separator.length = collapsedLen
-        if AppSettings.alwaysHidden { alwaysHidden?.length = collapsedLen }
+        applyCollapsedLayout()
         if AppSettings.hideToggleWhenCollapsed { toggle.isVisible = false }
         refreshIcons()
         separator.menu = contextMenu()
@@ -201,60 +257,62 @@ final class StatusBarController {
     }
 
     func expand() {
+        guard isCollapsed else { return }
+        let generation = beginLayoutTransition()
+        guard let screen = prepareLayoutScreen() else { return }
+
         // Only jump-over-notch when the display hosting OUR bar actually has a notch.
-        if notchMode && AppSettings.expandViaOverflowBar {
-            showOverflowBar()
+        if AppSettings.notchAware,
+           AppSettings.expandViaOverflowBar,
+           ScreenLayout.hasNotch(on: screen) {
+            showOverflowBar(on: screen, generation: generation)
             return
         }
 
-        guard isCollapsed else { return }
         toggle.isVisible = true
-        separator.length = AppSettings.separatorsHidden ? 0 : normalLen
-        if AppSettings.alwaysHidden {
-            alwaysHidden?.length = AppSettings.separatorsHidden ? 0 : collapsedLen
-        }
+        applyExpandedLayout()
         refreshIcons()
         separator.menu = contextMenu()
         scheduleAutoHide()
         // After expanding, if this display has a notch, tuck overflow.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
-            self?.collapseOverflowIfNeeded()
+            guard let self, self.isCurrentLayoutTransition(generation) else { return }
+            self.collapseOverflowIfNeeded()
         }
     }
 
     // MARK: - Jump over notch (left-side strip)
 
-    private func showOverflowBar() {
+    private func showOverflowBar(on initialScreen: NSScreen, generation: UInt) {
         toggle.isVisible = true
         presentingOverflow = true
         refreshIcons()
         separator.menu = contextMenu()
         autoHideTimer?.invalidate(); autoHideTimer = nil
 
-        // Resolve the display *now* from our status item — not mouse, not main.
-        guard let screen = activeScreen ?? NSScreen.main else { return }
         let auto = AppSettings.autoHide ? AppSettings.autoHideSeconds : nil
-        let useNotchJump = ScreenLayout.hasNotch(on: screen) && AppSettings.expandViaOverflowBar
 
         // 1) Briefly expand menubar on this display to snapshot icons.
         // 2) Re-collapse.
         // 3) Show strip on THIS display only (left of notch if notched; else menubar strip).
         if isCollapsed {
-            separator.length = AppSettings.separatorsHidden ? 0 : normalLen
+            applyExpandedLayout()
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) { [weak self] in
-            guard let self else { return }
-            // Re-resolve in case the item moved screens mid-flight.
-            let screen = self.activeScreen ?? screen
+            guard let self, self.isCurrentLayoutTransition(generation) else { return }
+            // Re-resolve only from the status items; use the original screen while
+            // AppKit is still relaying out their windows.
+            let screen = self.resolveLayoutScreen() ?? initialScreen
+            self.updateLengths(on: screen)
+            let useNotchJump = ScreenLayout.hasNotch(on: screen) && AppSettings.expandViaOverflowBar
 
             var items = StatusItemCapture.capture(on: screen, preferLeftOfRightSafe: useNotchJump)
             if items.isEmpty {
                 items = StatusItemCapture.capture(on: screen, preferLeftOfRightSafe: false)
             }
 
-            self.separator.length = self.collapsedLen
-            if AppSettings.alwaysHidden { self.alwaysHidden?.length = self.collapsedLen }
+            self.applyCollapsedLayout()
 
             OverflowBarPanel.shared.show(
                 items: items,
@@ -264,9 +322,10 @@ final class StatusBarController {
                     self?.activateOverflowItem(item, on: screen)
                 },
                 onDismiss: { [weak self] in
-                    self?.presentingOverflow = false
-                    self?.refreshIcons()
-                    self?.separator.menu = self?.contextMenu()
+                    guard let self else { return }
+                    self.presentingOverflow = false
+                    self.refreshIcons()
+                    self.separator.menu = self.contextMenu()
                 }
             )
             self.refreshIcons()
@@ -277,10 +336,13 @@ final class StatusBarController {
     private func activateOverflowItem(_ item: OverflowItem, on screen: NSScreen) {
         // Keep strip up; momentarily expand menubar so the real status item is hittable.
         let restoreCollapsed = isCollapsed
-        separator.length = AppSettings.separatorsHidden ? 0 : normalLen
+        let generation = beginLayoutTransition()
+        let layoutScreen = resolveLayoutScreen() ?? screen
+        updateLengths(on: layoutScreen)
+        applyExpandedLayout()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
-            guard let self else { return }
+            guard let self, self.isCurrentLayoutTransition(generation) else { return }
             // Prefer synthetic click at last-known frame (often still valid after expand).
             Self.postClick(at: item.frame)
             if let app = NSRunningApplication(processIdentifier: item.pid) {
@@ -288,11 +350,12 @@ final class StatusBarController {
             }
 
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
-                guard let self else { return }
+                guard let self, self.isCurrentLayoutTransition(generation) else { return }
                 // Collapse again; strip stays until user dismisses / auto-hide.
                 if restoreCollapsed || AppSettings.expandViaOverflowBar {
-                    self.separator.length = self.collapsedLen
-                    if AppSettings.alwaysHidden { self.alwaysHidden?.length = self.collapsedLen }
+                    let layoutScreen = self.resolveLayoutScreen() ?? screen
+                    self.updateLengths(on: layoutScreen)
+                    self.applyCollapsedLayout()
                 }
             }
         }
@@ -315,8 +378,8 @@ final class StatusBarController {
         presentingOverflow = false
         if syncCollapse {
             // Ensure still collapsed after dismissing the strip.
-            if !isCollapsed {
-                separator.length = collapsedLen
+            if !isCollapsed, prepareLayoutScreen() != nil {
+                applyCollapsedLayout()
             }
         }
         refreshIcons()
@@ -330,7 +393,7 @@ final class StatusBarController {
         // Always track display moves lightly; notch tuck only when enabled.
         overflowWatchTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
             guard let self else { return }
-            self.updateLengths()
+            self.updateLengths(on: self.activeScreen)
             if AppSettings.notchAware && AppSettings.autoCollapseOverflow {
                 self.collapseOverflowIfNeeded()
             }
@@ -559,20 +622,36 @@ final class StatusBarController {
     }
 
     @objc private func screenChanged() {
-        // Displays reconfigured / menu bar moved — drop strip and re-fit to new screen.
+        // Displays reconfigured / menu bar moved. Let AppKit settle the status
+        // item windows before resolving their new display.
+        let generation = beginLayoutTransition()
         if OverflowBarPanel.shared.isPresenting {
-            dismissOverflowBar(syncCollapse: true)
+            dismissOverflowBar(syncCollapse: false)
         }
-        updateLengths()
-        if isCollapsed { separator.length = collapsedLen }
-        collapseOverflowIfNeeded()
         refreshIcons()
         separator.menu = contextMenu()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            guard let self, self.isCurrentLayoutTransition(generation) else { return }
+            guard self.prepareLayoutScreen() != nil else { return }
+            if self.isCollapsed {
+                self.applyCollapsedLayout()
+            }
+            self.collapseOverflowIfNeeded()
+            self.refreshIcons()
+            self.separator.menu = self.contextMenu()
+        }
     }
 
     @objc private func alwaysHiddenChanged() {
+        _ = beginLayoutTransition()
         rebuildAlwaysHidden()
-        updateLengths()
+        guard prepareLayoutScreen() != nil else { return }
+        if isCollapsed {
+            applyCollapsedLayout()
+        } else {
+            applyExpandedLayout()
+        }
     }
 
     private func showSetupHint() {
