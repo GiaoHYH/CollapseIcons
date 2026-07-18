@@ -39,12 +39,6 @@ final class StatusBarController {
         resolveLayoutScreen()
     }
 
-    /// Notch jump only when the *active* display has a notch (and setting on).
-    private var notchMode: Bool {
-        guard AppSettings.notchAware, let s = activeScreen else { return false }
-        return ScreenLayout.hasNotch(on: s)
-    }
-
     init() {
         updateLengths(on: activeScreen)
         setup()
@@ -112,7 +106,7 @@ final class StatusBarController {
             b.target = self
             b.action = #selector(pressed(_:))
             b.sendAction(on: [.leftMouseUp, .rightMouseUp])
-            b.toolTip = notchMode
+            b.toolTip = activeScreen.map { AppSettings.notchAware && ScreenLayout.hasNotch(on: $0) } == true
                 ? "CollapseIcons · 点击后图标跳到刘海另一侧"
                 : "CollapseIcons"
         }
@@ -208,7 +202,7 @@ final class StatusBarController {
         toggle.button?.image = IconFactory.toggleImage(collapsed: collapsed)
         if let s = activeScreen {
             let label = ScreenLayout.displayLabel(for: s)
-            if notchMode {
+            if AppSettings.notchAware && ScreenLayout.hasNotch(on: s) {
                 toggle.button?.toolTip = presentingOverflow
                     ? "收起 · \(label)"
                     : "展开到刘海左侧 · \(label)"
